@@ -189,6 +189,8 @@
     .set-unit { font-size: 10px; font-weight: 700; color: var(--text-muted); }
     .btn-add-set { width: 100%; margin-top: 2px; background: transparent; border: 1px dashed rgba(255,255,255,0.12); border-radius: 10px; padding: 9px; font-size: 12px; font-weight: 700; color: var(--text-muted); cursor: pointer; font-family: inherit; letter-spacing: 0.04em; transition: border-color 0.15s, color 0.15s; }
     .btn-add-set:hover { border-color: var(--mint); color: var(--mint); }
+    .btn-repeat { background: rgba(255,255,255,0.05); color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 5px 12px; font-size: 11px; font-weight: 700; font-family: inherit; cursor: pointer; transition: all 0.15s; letter-spacing: 0.02em; }
+    .btn-repeat:hover { background: rgba(16,244,139,0.08); color: var(--mint); border-color: rgba(16,244,139,0.2); }
 
     /* ── Progress chart ── */
     .progress-card { background: var(--card); border-radius: var(--radius-card); border: 1px solid var(--border); padding: 16px; margin-bottom: 14px; }
@@ -356,9 +358,9 @@
     let _workoutTimer  = null;
 
     async function startWorkout() {
+      if (!_user) return;
       const id = crypto.randomUUID();
       const startTime = new Date().toISOString();
-      await db.from('workouts').insert({ id, user_id: _user.id, start_time: startTime });
       _activeWorkout = { id, startTime: Date.now(), logIds: [] };
       S.workouts.push(mapWkt({ id, start_time: startTime, end_time: null }));
       render();
@@ -366,6 +368,7 @@
         const el = document.getElementById('wt-timer');
         if (el) el.textContent = fmtDuration(Date.now() - _activeWorkout.startTime);
       }, 1000);
+      db.from('workouts').insert({ id, user_id: _user.id, start_time: startTime });
     }
 
     async function finishWorkout() {
@@ -854,7 +857,10 @@
           <div class="summary-card"><div class="summary-val ${ex.type}">${avg}</div><div class="summary-lbl">${ex.type==='strength'?'Avg Vol.':'Average'}</div></div>
         </div>
         <div class="log-card">
-          <div class="log-card-title">Log Session${_activeWorkout?` <span style="color:var(--mint);font-size:9px">· WORKOUT ACTIVE</span>`:''}</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="log-card-title" style="margin-bottom:0">Log Session${_activeWorkout?` <span style="color:var(--mint);font-size:9px">· WORKOUT ACTIVE</span>`:''}</div>
+            ${logs.length ? `<button class="btn-repeat" onclick="repeatLastSession('${ex.id}','${ex.type}')">🔁 Repeat Last</button>` : ''}
+          </div>
           ${logFields}
           <button class="btn btn-primary" style="width:100%;padding:14px;margin-top:12px" onclick="saveLog('${ex.id}','${ex.type}','set-list','l-duration','l-distance')">
             Log Workout
@@ -982,6 +988,25 @@
         logged_at:new Date(entry.timestamp).toISOString()
       });
       if (error) { toast('Save failed — check connection'); S.logs=S.logs.filter(l=>l.id!==entry.id); render(); }
+    }
+
+    async function repeatLastSession(exId, type) {
+      const logs = S.logs.filter(l => l.exerciseId === exId);
+      const last  = logs[logs.length - 1];
+      if (!last) return;
+      const entry = { id: crypto.randomUUID(), exerciseId: exId, timestamp: Date.now() };
+      if (_activeWorkout) { entry.workoutId = _activeWorkout.id; _activeWorkout.logIds.push(entry.id); }
+      if (type === 'strength') entry.sets = getSets(last).map(s => ({...s}));
+      else { entry.duration = last.duration; entry.distance = last.distance || null; }
+      S.logs.push(entry);
+      toast('🔁 Last session repeated!');
+      render();
+      await db.from('logs').insert({
+        id: entry.id, user_id: _user.id, exercise_id: entry.exerciseId,
+        workout_id: entry.workoutId || null, sets: entry.sets || null,
+        duration: entry.duration || null, distance: entry.distance || null,
+        logged_at: new Date(entry.timestamp).toISOString()
+      });
     }
 
     async function deleteLog(id) {
